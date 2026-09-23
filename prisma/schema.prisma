@@ -1,0 +1,112 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AccountStatus {
+  ACTIVE
+  BLOCKED
+  CLOSED
+}
+
+enum AccountType {
+  TRANSACTION
+}
+
+enum TransactionType {
+  CREDIT
+  DEBIT
+}
+
+enum PayrollStatus {
+  PENDING_APPROVAL
+  COMPLETED
+  REJECTED
+}
+
+model Bank {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  code      String   @unique @db.VarChar(3)
+  createdAt DateTime @default(now())
+
+  accounts Account[]
+}
+
+model Account {
+  id           String        @id @default(uuid())
+  bankId       String
+  iban         String        @unique @db.VarChar(19)
+  companyId    String?
+  holderName   String?
+  currency     String        @default("MKD") @db.VarChar(3)
+  balance      Decimal       @default(0) @db.Decimal(18, 2)
+  status       AccountStatus @default(ACTIVE)
+  accountType  AccountType   @default(TRANSACTION)
+  lastSyncedAt DateTime      @default(now())
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  bank         Bank          @relation(fields: [bankId], references: [id], onDelete: Cascade)
+  creditLine   CreditLine?
+  transactions Transaction[]
+
+  @@index([companyId])
+  @@index([bankId])
+}
+
+model Transaction {
+  id           String          @id @default(uuid())
+  accountId    String
+  type         TransactionType
+  amount       Decimal         @db.Decimal(18, 2)
+  currency     String          @db.VarChar(3)
+  description  String
+  balanceAfter Decimal         @db.Decimal(18, 2)
+  createdAt    DateTime        @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, createdAt, id])
+}
+
+model CreditLine {
+  id                String   @id @default(uuid())
+  accountId         String   @unique
+  creditAmount      Decimal  @db.Decimal(18, 2)
+  remainingBalance  Decimal  @db.Decimal(18, 2)
+  nextPaymentDate   DateTime
+  installmentAmount Decimal  @db.Decimal(18, 2)
+  totalInstallments Int
+  installmentsPaid  Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+}
+
+model PayrollRequest {
+  id         String        @id @default(uuid())
+  companyId  String
+  status     PayrollStatus @default(PENDING_APPROVAL)
+  payload    Json
+  allocation Json
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@index([companyId, status])
+}
+
+model FailedWebhook {
+  id        String   @id @default(uuid())
+  eventType String
+  payload   Json
+  lastError String
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
