@@ -13,6 +13,8 @@ export interface WebhookTransaction {
 export interface TransactionCreatedEvent {
   eventType: 'TRANSACTION_CREATED';
   iban: string;
+  /** The company the account is linked to, or null while it is unclaimed. */
+  companyId: string | null;
   currency: string;
   newBalance: number;
   transactions: WebhookTransaction[];

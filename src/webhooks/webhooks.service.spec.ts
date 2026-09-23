@@ -13,6 +13,7 @@ const CONFIG: Record<string, string> = {
 const event: TransactionCreatedEvent = {
   eventType: 'TRANSACTION_CREATED',
   iban: 'MK07300000000042425',
+  companyId: 'company-03',
   currency: 'MKD',
   newBalance: 1500,
   transactions: [

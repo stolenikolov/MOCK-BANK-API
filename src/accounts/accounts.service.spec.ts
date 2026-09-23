@@ -126,7 +126,12 @@ describe('AccountsService.deposit', () => {
 
     expect(webhooks.dispatch).toHaveBeenCalledTimes(1);
     const event = webhooks.dispatch.mock.calls[0][0];
-    expect(event).toMatchObject({ eventType: 'TRANSACTION_CREATED', iban: IBAN, newBalance: 150000 });
+    expect(event).toMatchObject({
+      eventType: 'TRANSACTION_CREATED',
+      iban: IBAN,
+      companyId: 'company-03',
+      newBalance: 150000,
+    });
     expect(event.transactions).toHaveLength(1);
   });
 

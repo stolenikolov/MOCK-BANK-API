@@ -39,14 +39,22 @@ export class PayrollService {
       });
     }
 
-    const accounts = await this.prisma.account.findMany({ where: { iban: { in: ibans } } });
+    // Only the requesting company's own accounts can pay its salaries. Knowing
+    // an IBAN is not owning it: IBANs are printed on every invoice. An account
+    // someone else holds is answered exactly like one that does not exist, so
+    // the reply does not confirm that it does.
+    const accounts = await this.prisma.account.findMany({
+      where: { iban: { in: ibans }, companyId: dto.companyId },
+    });
 
     const found = new Set(accounts.map((account) => account.iban));
     const unknown = ibans.filter((iban) => !found.has(iban));
     if (unknown.length > 0) {
-      throw ApiError.notFound('ACCOUNT_NOT_FOUND', 'One or more accounts do not exist', {
-        ibans: unknown,
-      });
+      throw ApiError.notFound(
+        'ACCOUNT_NOT_FOUND',
+        'One or more accounts do not exist or are not linked to this company',
+        { ibans: unknown },
+      );
     }
 
     const eligible = accounts.filter(
@@ -146,7 +154,11 @@ export class PayrollService {
     const entries = stored.entries ?? [];
 
     const ibans = dedupe(entries.map((entry) => entry.iban));
-    const accounts = await this.prisma.account.findMany({ where: { iban: { in: ibans } } });
+    // Ownership is checked again at execution: an account unlinked since the
+    // preview no longer pays this company's salaries.
+    const accounts = await this.prisma.account.findMany({
+      where: { iban: { in: ibans }, companyId: request.companyId },
+    });
     const byIban = new Map(accounts.map((account) => [account.iban, account]));
 
     this.assertStillExecutable(entries, byIban, stored.currency);

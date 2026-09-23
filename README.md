@@ -388,6 +388,12 @@ someone, the whole run is rejected:
 }
 ```
 
+Every IBAN in `accounts` must be linked to the requesting `companyId` (claimed
+through `POST /accounts/verify`). One that is not — someone else's account, or
+nobody's yet — gets the same `404 ACCOUNT_NOT_FOUND` as an IBAN that does not
+exist, so knowing another company's IBAN is never enough to pay from it.
+Ownership is checked again at approval.
+
 Only `ACTIVE` accounts in the payroll currency are used. Pass `"currency": "EUR"`
 to run a EUR payroll; the default is `MKD`. Accounts that are blocked, closed, or
 in the wrong currency are skipped and listed under `ineligibleAccounts` so
@@ -433,6 +439,7 @@ Every event is POSTed to `BIZNISMK_WEBHOOK_URL` with:
 {
   "eventType": "TRANSACTION_CREATED",
   "iban": "MK07300000000042425",
+  "companyId": "company-03", // the company the account is linked to; null while unclaimed
   "currency": "MKD",
   "newBalance": 880150.25,
   "transactions": [

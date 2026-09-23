@@ -270,7 +270,7 @@ export class AccountsService {
       return { transaction: created, balance: updated.balance };
     });
 
-    return this.transactionResult(account.iban, account.currency, result.balance, result.transaction);
+    return this.transactionResult(account, result.balance, result.transaction);
   }
 
   async withdraw(rawIban: string, dto: SimulateAmountDto) {
@@ -313,7 +313,7 @@ export class AccountsService {
       return { transaction: created, balance: updated.balance };
     });
 
-    return this.transactionResult(account.iban, account.currency, result.balance, result.transaction);
+    return this.transactionResult(account, result.balance, result.transaction);
   }
 
   /**
@@ -362,29 +362,27 @@ export class AccountsService {
       return { creditLine, transaction: created, balance: updated.balance };
     });
 
-    const payload = this.transactionResult(
-      account.iban,
-      account.currency,
-      result.balance,
-      result.transaction,
-    );
+    const payload = this.transactionResult(account, result.balance, result.transaction);
 
     return { ...payload, creditLine: serializeCreditLine(result.creditLine) };
   }
 
   /** Shared tail of every simulate endpoint: fire the webhook, shape the response. */
   private transactionResult(
-    iban: string,
-    currency: string,
+    account: { iban: string; currency: string; companyId: string | null },
     balance: Prisma.Decimal,
     transaction: Transaction,
   ) {
+    const { iban, currency } = account;
     const serialized = serializeTransaction(transaction);
     const newBalance = toNumber(balance);
 
     this.webhooks.dispatch({
       eventType: 'TRANSACTION_CREATED',
       iban,
+      // Says whose account it is, so the receiving app can refuse an account
+      // it has on file for anyone else.
+      companyId: account.companyId,
       currency,
       newBalance,
       transactions: [serialized],

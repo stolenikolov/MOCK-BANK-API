@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { PayrollService } from './payroll.service';
+import type { ApiError } from '../common/errors';
 
 const IBAN_A = 'MK07300000000042425';
 const IBAN_B = 'MK07210000000011111';
@@ -39,7 +40,18 @@ function buildService(accounts: ReturnType<typeof account>[]) {
   };
 
   const prisma = {
-    account: { findMany: jest.fn().mockResolvedValue(accounts) },
+    // Filters like the database would, so the ownership checks are really exercised.
+    account: {
+      findMany: jest.fn(({ where }: { where: { iban: { in: string[] }; companyId?: string } }) =>
+        Promise.resolve(
+          accounts.filter(
+            (candidate) =>
+              where.iban.in.includes(candidate.iban as string) &&
+              (where.companyId === undefined || candidate.companyId === where.companyId),
+          ),
+        ),
+      ),
+    },
     payrollRequest: {
       create: jest.fn(({ data }: { data: Record<string, unknown> }) =>
         Promise.resolve({
@@ -150,6 +162,29 @@ describe('PayrollService.createRequest', () => {
       service.createRequest({ companyId: 'company-03', payments, accounts: [IBAN_A] }),
     ).rejects.toMatchObject({ errorCode: 'ACCOUNT_NOT_FOUND', status: 404 });
   });
+
+  it("refuses another company's account exactly like an unknown one, and prices nothing", async () => {
+    const { service, prisma } = buildService([
+      account(),
+      account({ id: 'acc-b', iban: IBAN_B, companyId: 'company-99' }),
+    ]);
+
+    const error = await service
+      .createRequest({ companyId: 'company-03', payments, accounts: [IBAN_A, IBAN_B] })
+      .catch((caught: ApiError) => caught);
+
+    expect(error).toMatchObject({ errorCode: 'ACCOUNT_NOT_FOUND', status: 404 });
+    expect((error as ApiError).getResponse()).toMatchObject({ ibans: [IBAN_B] });
+    expect(prisma.payrollRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses an account nobody has claimed yet', async () => {
+    const { service } = buildService([account({ companyId: null })]);
+
+    await expect(
+      service.createRequest({ companyId: 'company-03', payments, accounts: [IBAN_A] }),
+    ).rejects.toMatchObject({ errorCode: 'ACCOUNT_NOT_FOUND', status: 404 });
+  });
 });
 
 describe('PayrollService.approve', () => {
@@ -250,6 +285,15 @@ describe('PayrollService.approve', () => {
       errorCode: 'ACCOUNT_NOT_ACTIVE',
       status: 409,
     });
+  });
+
+  it('moves nothing if the account left the company between preview and approval', async () => {
+    const { service, prisma, tx, webhooks } = buildService([account({ companyId: 'company-99' })]);
+    prisma.payrollRequest.findUnique.mockResolvedValue(storedRequest);
+
+    await expect(service.approve('req-1')).rejects.toMatchObject({ errorCode: 'ACCOUNT_NOT_FOUND' });
+    expect(tx.transaction.create).not.toHaveBeenCalled();
+    expect(webhooks.dispatch).not.toHaveBeenCalled();
   });
 
   it('404s on an unknown request id', async () => {
