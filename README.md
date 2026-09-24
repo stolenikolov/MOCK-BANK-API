@@ -531,7 +531,22 @@ Requests are logged one line each: `POST /accounts/MK07.../simulate/deposit 201 
 
 ---
 
-## 10. Deployment (Render)
+## 10. Deployment
+
+### Vercel (current)
+
+`vercel.json` runs the whole API as one function (`api/index.js` →
+`src/serverless.ts`) in Frankfurt, next to its Neon database. The build
+(`scripts/vercel-build.js`) generates the Prisma client, applies migrations on
+production deploys only (over `DATABASE_URL_UNPOOLED`), and builds.
+
+There is no process to keep retry timers in, so: a webhook's retry ladder runs
+inside the request that fired it (kept alive with `waitUntil`, so keep
+`WEBHOOK_RETRY_BACKOFF_MS` short), and whatever still fails is replayed once a
+day by Vercel Cron calling `GET /webhooks/failed/replay`, which takes
+`Authorization: Bearer $CRON_SECRET` instead of the API key.
+
+### Render (alternative)
 
 `render.yaml` provisions the web service and its Postgres. Set `API_KEY`,
 `BIZNISMK_WEBHOOK_URL` and `WEBHOOK_SIGNING_SECRET` in the dashboard; the build

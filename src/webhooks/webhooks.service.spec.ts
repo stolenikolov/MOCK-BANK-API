@@ -153,3 +153,54 @@ async function flush(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 }
+
+describe('WebhooksService.replayFailed — the daily replay on Vercel', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  const stored = (id: string, createdAt: string) => ({ id, payload: event, createdAt: new Date(createdAt) });
+
+  it('asks for the oldest failures first, removes what gets through and keeps the rest', async () => {
+    const { service, failedWebhook } = buildService();
+    failedWebhook.findMany.mockResolvedValue([stored('old', '2026-09-01'), stored('new', '2026-09-02')]);
+    Object.assign(failedWebhook, { count: jest.fn().mockResolvedValue(1) });
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response('ok', { status: 200 }))
+      .mockResolvedValueOnce(new Response('down', { status: 503, statusText: 'Unavailable' }));
+
+    await expect(service.replayFailed()).resolves.toEqual({ delivered: 1, stillFailing: 1 });
+
+    expect(failedWebhook.findMany).toHaveBeenCalledWith(expect.objectContaining({ orderBy: { createdAt: 'asc' } }));
+    expect(failedWebhook.delete).toHaveBeenCalledWith({ where: { id: 'old' } });
+    expect(failedWebhook.update).toHaveBeenCalledWith({
+      where: { id: 'new' },
+      data: { attempts: { increment: 1 }, lastError: expect.stringContaining('503') },
+    });
+  });
+
+  it('makes one attempt per failure, not the whole retry ladder', async () => {
+    const { service, failedWebhook } = buildService();
+    failedWebhook.findMany.mockResolvedValue([stored('only', '2026-09-01')]);
+    Object.assign(failedWebhook, { count: jest.fn().mockResolvedValue(1) });
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue(new Response('no', { status: 500 }));
+
+    await service.replayFailed();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops starting new deliveries once its time budget is spent', async () => {
+    const { service, failedWebhook } = buildService();
+    failedWebhook.findMany.mockResolvedValue([stored('a', '2026-09-01'), stored('b', '2026-09-02')]);
+    Object.assign(failedWebhook, { count: jest.fn().mockResolvedValue(2) });
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
+    const clock = jest.spyOn(Date, 'now');
+    clock.mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(60_000);
+
+    await service.replayFailed(45_000);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});

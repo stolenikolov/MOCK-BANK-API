@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'node:crypto';
+import { waitUntil } from '@vercel/functions';
 import { PrismaService } from '../common/prisma.service';
 import { ApiError } from '../common/errors';
 import type { WebhookEvent } from './webhook.types';
@@ -27,11 +28,16 @@ export class WebhooksService implements OnModuleDestroy {
   /**
    * Fire-and-forget: the request that triggered the event must not wait on
    * BiznisMk being reachable. Exhausted retries land in the FailedWebhook table.
+   *
+   * waitUntil keeps a Vercel function alive until delivery is settled; it would
+   * otherwise be frozen as soon as it answered. Off Vercel it does nothing.
    */
   dispatch(event: WebhookEvent): void {
-    void this.deliverWithRetries(event).catch((error) => {
-      this.logger.error('Webhook dispatch crashed: ' + describe(error));
-    });
+    waitUntil(
+      this.deliverWithRetries(event).catch((error) => {
+        this.logger.error('Webhook dispatch crashed: ' + describe(error));
+      }),
+    );
   }
 
   /** Sign a JSON body exactly the way BiznisMk must verify it. */
@@ -70,6 +76,37 @@ export class WebhooksService implements OnModuleDestroy {
       },
     });
     return { id, delivered: false, lastError: result.lastError };
+  }
+
+  /**
+   * The scheduled replay (Vercel Cron, where no process keeps retry timers):
+   * one attempt per stored failure, oldest first, so events reach BiznisMk in
+   * the order they happened. Delivered ones are removed; the rest stay for the
+   * next run. Stops before `budgetMs` so the function is not cut off mid-write.
+   */
+  async replayFailed(budgetMs = 45_000): Promise<{ delivered: number; stillFailing: number }> {
+    const url = this.config.get<string>('BIZNISMK_WEBHOOK_URL');
+    if (!url) return { delivered: 0, stillFailing: await this.prisma.failedWebhook.count() };
+
+    const started = Date.now();
+    const failures = await this.prisma.failedWebhook.findMany({ orderBy: { createdAt: 'asc' }, take: 50 });
+    let delivered = 0;
+
+    for (const failure of failures) {
+      if (Date.now() - started > budgetMs) break;
+      try {
+        await this.post(url, failure.payload as unknown as WebhookEvent);
+        await this.prisma.failedWebhook.delete({ where: { id: failure.id } });
+        delivered += 1;
+      } catch (error) {
+        await this.prisma.failedWebhook.update({
+          where: { id: failure.id },
+          data: { attempts: { increment: 1 }, lastError: describe(error) },
+        });
+      }
+    }
+
+    return { delivered, stillFailing: await this.prisma.failedWebhook.count() };
   }
 
   private async deliverWithRetries(event: WebhookEvent): Promise<void> {
