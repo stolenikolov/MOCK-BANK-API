@@ -5,9 +5,10 @@
 //    production database — over Neon's direct connection, which migrations
 //    need; the app itself runs on the pooled one.
 // 3. nest build, which api/index.js loads.
-// 4. An empty public/ as the static output, so no repository file is served.
+//
+// The static output is public/, which holds only robots.txt: Vercel refuses an
+// empty output directory, and with none set it would serve the repository.
 const { execSync } = require('node:child_process');
-const { mkdirSync } = require('node:fs');
 
 const run = (command, env = process.env) => execSync(command, { stdio: 'inherit', env });
 
@@ -22,4 +23,3 @@ if (process.env.VERCEL_ENV === 'production') {
 }
 
 run('npx nest build');
-mkdirSync('public', { recursive: true });
