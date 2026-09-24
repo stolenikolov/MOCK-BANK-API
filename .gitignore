@@ -1,5 +1,8 @@
 node_modules/
 dist/
 .env
+# Neon CLI: the database connection strings, and the linked project/branch.
+.env.local
+.neon
 *.log
 .DS_Store
